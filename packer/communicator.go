@@ -118,54 +118,19 @@ func (r *RemoteCmd) StartWithUi(ctx context.Context, c Communicator, ui Ui) erro
 		r.Stderr = io.MultiWriter(r.Stderr, stderr_w)
 	}
 
-	// Start the command
-	if err := c.Start(ctx, r); err != nil {
-		return err
-	}
-
-	// Create the channels we'll use for data
-	exitCh := make(chan struct{})
-	stdoutCh := iochan.DelimReader(stdout_r, '\n')
-	stderrCh := iochan.DelimReader(stderr_r, '\n')
-
-	// Start the goroutine to watch for the exit
-	go func() {
-		defer close(exitCh)
-		defer stdout_w.Close()
-		defer stderr_w.Close()
-		r.Wait()
-	}()
-
-	// Loop and get all our output
-OutputLoop:
-	for {
-		select {
-		case output := <-stderrCh:
+	// Loop and get all our output until done.
+	printFn := func(in <-chan string) {
+		for output := range in {
 			if output != "" {
 				ui.Message(r.cleanOutputLine(output))
 			}
-		case output := <-stdoutCh:
-			if output != "" {
-				ui.Message(r.cleanOutputLine(output))
-			}
-		case <-ctx.Done():
-			break OutputLoop
-		case <-exitCh:
-			break OutputLoop
 		}
 	}
+	go printFn(iochan.DelimReader(stdout_r, '\n'))
+	go printFn(iochan.DelimReader(stderr_r, '\n'))
 
-	// Make sure we finish off stdout/stderr because we may have gotten
-	// a message from the exit channel before finishing these first.
-	for output := range stdoutCh {
-		ui.Message(r.cleanOutputLine(output))
-	}
-
-	for output := range stderrCh {
-		ui.Message(r.cleanOutputLine(output))
-	}
-
-	return nil
+	// Start the command
+	return c.Start(ctx, r)
 }
 
 // SetExited is a helper for setting that this process is exited. This
